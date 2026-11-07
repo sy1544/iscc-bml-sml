@@ -1,0 +1,56 @@
+name: Sync upstream releases
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-releases
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'sy1544/iscc-bml-sml' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge new upstream release tags into main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: Ivan25rus/iscc-bml-sml
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # Start with v0.4.0. Include every subsequently published release,
+          # even if multiple releases appear between scheduled runs.
+          releases=$(gh api --paginate "repos/$UPSTREAM/releases?per_page=100" |
+            jq -sr 'add | map(select(.draft == false and .published_at >= "2026-11-06T11:41:36Z"))
+              | sort_by(.published_at, .id) | .[].tag_name')
+
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            synced_ref="refs/tags/upstream/$tag"
+            if git show-ref --verify --quiet "$synced_ref"; then
+              continue
+            fi
+
+            git fetch --no-tags "https://github.com/$UPSTREAM.git" "refs/tags/$tag"
+            release_ref=$(git rev-parse --verify FETCH_HEAD)
+            release_commit=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
+            echo "Merging upstream release $tag ($release_commit)"
+            git merge --no-edit "$release_commit"
+
+            # Record the source tag only if the branch update also succeeds.
+            git push --atomic origin HEAD:refs/heads/main "$release_ref:$synced_ref"
+          done <<< "$releases"
