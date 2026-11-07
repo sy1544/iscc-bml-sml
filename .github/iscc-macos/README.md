@@ -2,7 +2,7 @@
 
 The fork's [release workflow](../workflows/sync-upstream-release.yml) merges each
 published add-on release, then builds it against the pinned ISCC 1.2.0 source.
-Download the matching ZIP from the successful workflow run. Choose `arm64` for
+Download the matching ZIP from the fork’s [Releases page](https://github.com/sy1544/iscc-bml-sml/releases). Choose `arm64` for
 Apple Silicon or `x64` for Intel. The builds use local ad-hoc signing where
 required by macOS and have no Developer ID signature or Apple notarization.
 The workflow can be run manually to rebuild the latest release.
@@ -24,5 +24,5 @@ for receiver capabilities and demo checks. Level rendering can be configured
 separately in the app settings after connecting the receiver.
 
 If an upstream kit changes the integration hooks, the build fails until the
-overlay is adapted. The workflow records a build only after both architectures
+overlay is adapted. The workflow publishes a release only after both architectures
 pass.
