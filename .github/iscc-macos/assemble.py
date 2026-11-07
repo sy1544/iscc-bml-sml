@@ -45,6 +45,10 @@ def assemble(kit, project):
 
     for source in sorted((payload / 'mt5-vps').glob('*.js')):
         copy(source, mt5 / source.name)
+    edit(mt5 / 'client.js', '  brokerSymbol(symbol) {',
+         "  brokerSymbol(symbol) {\n"
+         "    // Management returns the broker's exact symbol, which can include a suffix.\n"
+         "    if (typeof symbol === 'string' && symbol && [this.config.spxSymbol, this.config.ustecSymbol].includes(symbol)) return symbol;")
     for source in sorted((payload / 'levelOrder').glob('*.js')):
         copy(source, addon / source.name)
     for name in ('durableFile.js', 'journalWriter.js', 'tvListener/candle-mappings.js'):
@@ -94,7 +98,7 @@ def assemble(kit, project):
     start = reference.index("settings.register('mt5-vps',")
     end = reference.index('function initService(api)', start)
     reference = reference[:start] + reference[end:]
-    reference = replace_once(reference, 'function initService(api)', 'function initService(api, handle)')
+    reference = replace_once(reference, 'function initService(api)', 'function initService(api, handle, publishQuote)')
     reference = replace_once(reference, "  const {app, ipcMain, powerSaveBlocker} = require('electron');",
                              "  const {app, powerSaveBlocker} = require('electron');\n  const ipcMain = {handle};")
     reference = replace_once(reference, "  const tunnelRecovery=require('./tunnelRecovery').createTunnelRecovery(app.getPath('userData'));\n", '')
@@ -103,6 +107,9 @@ def assemble(kit, project):
                              "        if (config.enabled !== true) throw Error('MT5 VPS is disabled in the local configuration');\n"
                              '        const connection = new MT5VPSAdapter(config);')
     reference = replace_once(reference, "  require('../brokerage/brokerageAdapters')['mt5-vps'] = () => api.mt5VPS.getAdapter();\n", '')
+    reference = replace_once(reference, "        connection.on('quote:updated', snapshot => {",
+                             "        connection.on('quote:updated', snapshot => {\n"
+                             "          publishQuote({...snapshot, provider: 'mt5-vps'});")
     reference = reference.replace(",canRecoverConnection:await tunnelRecovery.available(config)", "")
     reference = replace_once(reference, "if (!settings.writeConfig('mt5-vps',changed)) throw Error('Не удалось сохранить настройки');",
                              'saveConfig({followers:next,mirrorAccount:changed.mirrorAccount});')

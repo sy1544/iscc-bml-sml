@@ -14,7 +14,11 @@ function mount(ipc) {
     on: (...args) => ipc.on(...args),
     removeListener: (...args) => ipc.removeListener(...args)
   };
-  mountManagement(mt5IPC, toolbar);
+  const instrumentInfo = new Map();
+  ipc.on('instrument:updated', (_event, snapshot) => {
+    if (snapshot?.provider === 'mt5-vps') instrumentInfo.set(snapshot.symbol, snapshot.metadata);
+  });
+  mountManagement(mt5IPC, toolbar, { getInstrumentInfo: symbol => instrumentInfo.get(symbol) });
   mountTradeSettings(mt5IPC, toolbar);
 
   function add(parent, tag, text) {

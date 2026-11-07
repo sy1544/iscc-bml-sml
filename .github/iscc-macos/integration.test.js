@@ -31,6 +31,11 @@ test('the built app wires MT5 IPC, rejects external callers and starts disabled'
   try {
     const project = process.cwd();
     const main = require(path.join(project, 'app/services/bml-sml/main'));
+    const { MT5VPSAdapter } = require(path.join(project, 'app/services/mt5-vps/client'));
+    const adapter = new MT5VPSAdapter({ spxSymbol: 'SPX500.cash', ustecSymbol: 'USTEC.cash' });
+    assert.equal(adapter.brokerSymbol('USTEC'), 'USTEC.cash');
+    assert.equal(adapter.brokerSymbol('USTEC.cash'), 'USTEC.cash');
+    assert.throws(() => adapter.brokerSymbol('unconfigured'));
     const servicesApi = {
       levelTrack: { snapshot: () => ({ config: { groups: [{ ticker: 'USTEC', levels: [20000], maxOffset: 2 }] } }) }
     };

@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { ipcMain } = require('electron');
+const { BrowserWindow, ipcMain } = require('electron');
 const settings = require('../settings');
 const { initService, readConfig } = require('../mt5-vps/manifest');
 const { isIndex } = require('../mt5-vps/client');
@@ -29,7 +29,12 @@ function install({ servicesApi, tradeRules, orderCalc, normalizeQuoteForValidati
       }
     });
   }
-  initService(servicesApi, handle);
+  initService(servicesApi, handle, snapshot => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      const contents = window.webContents;
+      if (!contents.isDestroyed() && contents.getURL() === renderer) contents.send('instrument:updated', snapshot);
+    }
+  });
 
   async function getSnapshot(symbol) {
     const adapter = getAdapter();
