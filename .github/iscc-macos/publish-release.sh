@@ -7,7 +7,7 @@ prerelease=$3
 assets_dir=$4
 repository=sy1544/iscc-bml-sml
 
-release=$(gh release view "$tag" -R "$repository" --json isDraft,targetCommitish,assets || true)
+release=$(gh release view "$tag" -R "$repository" --json isDraft,targetCommitish,assets 2>/dev/null || true)
 refs=$(git ls-remote "https://github.com/$repository.git" "refs/tags/$tag" "refs/tags/$tag^{}")
 tag_sha=$(awk 'END {print $1}' <<< "$refs")
 if [[ -n "$tag_sha" && "$tag_sha" != "$source_sha" ]]; then
@@ -24,7 +24,7 @@ for arch in arm64 x64; do
   test -s "$assets_dir/ISCC-macos-$arch.zip"
 done
 if [[ -z "$release" ]]; then
-  options=()
+  options=(--draft)
   if [[ "$prerelease" == true ]]; then options+=(--prerelease); fi
   notes=$(mktemp)
   trap 'rm -f "$notes"' EXIT
@@ -36,7 +36,7 @@ Both apps are ad-hoc signed and were tested for startup in GitHub Actions. They 
 - [Setup instructions](https://github.com/$repository/blob/main/.github/iscc-macos/README.md)
 - [Upstream BML/SML release](https://github.com/Ivan25rus/iscc-bml-sml/releases/tag/$tag)
 EOF
-  gh release create "$tag" -R "$repository" --target "$source_sha" --draft \
+  gh release create "$tag" -R "$repository" --target "$source_sha" \
     --title "ISCC $tag for macOS" --notes-file "$notes" "${options[@]}"
   release=$(gh release view "$tag" -R "$repository" --json isDraft,targetCommitish,assets)
 fi
