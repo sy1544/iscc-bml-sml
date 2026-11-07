@@ -123,14 +123,17 @@ jobs:
           npm install --no-audit --no-fund
           npm test
           node --test ../.github/iscc-macos/integration.test.js
-          npx --no-install electron-builder --mac zip "--$ARCH" --publish never
-          executable=$(find dist -path '*/ISCC.app/Contents/MacOS/ISCC' -print -quit)
-          test -n "$executable"
+          npx --no-install electron-builder --mac dir "--$ARCH" --publish never
+          app=$(find dist -name ISCC.app -type d -print -quit)
+          test -n "$app"
           if [[ "$ARCH" == x64 ]]; then expected=x86_64; else expected=arm64; fi
-          lipo -verify_arch "$expected" "$executable"
-          archive=$(find dist -maxdepth 1 -name '*.zip' -print -quit)
-          test -n "$archive"
-          mv "$archive" "dist/$ARTIFACT"
+          test "$(lipo -archs "$app/Contents/MacOS/ISCC")" = "$expected"
+          node -e 'require("@electron/osx-sign").signAsync({
+            app: process.argv[1], identity: "-", identityValidation: false,
+            preAutoEntitlements: false, hardenedRuntime: false, timestamp: "none"
+          }).catch(error => { console.error(error); process.exitCode = 1; })' "$app"
+          codesign --verify --deep --strict "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/$ARTIFACT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: base-app/dist/${{ matrix.name }}-macos-${{ matrix.arch }}.zip
