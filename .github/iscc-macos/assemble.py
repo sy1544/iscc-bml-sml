@@ -60,10 +60,10 @@ def assemble(kit, project):
          '  });\n  createWindow();\n  setupIpc(orderCardService);')
     edit(app / 'renderer.js', "const {ipcRenderer} = require('electron');",
          "const {ipcRenderer} = require('electron');\n"
-         "const bmlSml = require('./services/bml-sml/renderer').mount(ipcRenderer);")
+         "const bmlSml = document.querySelector('.toolbar') && require('./services/bml-sml/renderer').mount(ipcRenderer);")
     edit(app / 'renderer.js', '  card.appendChild(btns);\n  const note =',
          "  card.appendChild(btns);\n"
-         "  if (row.cardType === 'levelOrder') bmlSml.addCardButton(card, row, body.line);\n"
+         "  if (row.cardType === 'levelOrder') bmlSml?.addCardButton(card, row, body.line);\n"
          '  const note =')
 
     descriptor_name = 'levelOrder/config/level-order-settings-descriptor.json'
@@ -118,6 +118,18 @@ def assemble(kit, project):
          '    for (const rule of this.rules) {\n'
          '      // Conditional VPS entries validate executable prices at the receiver.\n'
          '      if (deferMarketPrice && rule instanceof MaxOrderPriceDeviationRule) continue;')
+
+    # The Windows-only base release hardcodes Windows separators in its mock.
+    dwx_test = project / 'test/dwxMarketHedge.test.js'
+    test = dwx_test.read_text()
+    windows_path = r"'app\\services\\brokerage-adapter-dwx\\comps\\dwx.js'"
+    if test.count(windows_path) != 2:
+        raise ValueError('The DWX test fixture needs review')
+    dwx_test.write_text(test.replace(windows_path,
+        "require('node:path').join('app', 'services', 'brokerage-adapter-dwx', 'comps', 'dwx.js')"))
+
+    retry_adapter = "    const adapter = new DWXAdapter({ metatraderDirPath: 'test', provider: 'mt5-j2t-dwx', openOrderRetryDelayMs: 1 });"
+    edit(dwx_test, retry_adapter, retry_adapter + '\n    adapter.setExecutionRetryPolicy({ shouldRetry: () => true });')
 
     with tempfile.TemporaryDirectory() as temporary:
         installer.install(project, {'schema': 2, 'platform': 'macos', 'adapterMode': 'iscc', 'publishToLT': True},

@@ -14,7 +14,7 @@ function install({ servicesApi, tradeRules, orderCalc, normalizeQuoteForValidati
   const policy = createFeaturePolicy(ids);
   const renderer = pathToFileURL(path.resolve(__dirname, '../../index.html')).href;
   const getAdapter = () => servicesApi.mt5VPS.getAdapter();
-  const getGroups = () => servicesApi.levelTrack?.snapshot().config.groups || [];
+  const getGroups = () => servicesApi.levelTrack?.snapshot()?.config?.groups || [];
   const getConfig = () => settings.readConfig('level-order')?.config || {};
   function handle(channel, callback) {
     ipcMain.handle(channel, async (event, ...args) => {
@@ -46,7 +46,8 @@ function install({ servicesApi, tradeRules, orderCalc, normalizeQuoteForValidati
     validateTrade: (order, quote, options) => tradeRules.validate(order, normalizeQuoteForValidation(quote), options)
   });
   function requireTrading() {
-    if (readConfig().tradingEnabled !== true || getAdapter().config.tradingEnabled !== true) {
+    const config = readConfig();
+    if (config.enabled !== true || config.tradingEnabled !== true || getAdapter().config.tradingEnabled !== true) {
       throw Error('New BML/SML entries are disabled in the local configuration');
     }
   }

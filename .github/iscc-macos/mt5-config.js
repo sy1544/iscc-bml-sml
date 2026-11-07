@@ -19,15 +19,15 @@ function readConfig() {
 
 function saveConfig(changes) {
   const file = configFile();
-  const temporary = file + '.tmp';
   const config = { ...readConfig(), ...changes };
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const directory = fs.mkdtempSync(path.join(path.dirname(file), '.mt5-config-'));
+  const temporary = path.join(directory, 'config.json');
   try {
     fs.writeFileSync(temporary, JSON.stringify(config, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
     fs.renameSync(temporary, file);
-  } catch (error) {
-    if (error.code !== 'EEXIST') fs.rmSync(temporary, { force: true });
-    throw error;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 }
 

@@ -32,9 +32,15 @@ test('the built app wires MT5 IPC, rejects external callers and starts disabled'
     const project = process.cwd();
     const main = require(path.join(project, 'app/services/bml-sml/main'));
     const servicesApi = {
-      levelTrack: { snapshot: () => ({ config: { groups: [{ ticker: 'USTEC', levels: [20000] }] } }) }
+      levelTrack: { snapshot: () => ({ config: { groups: [{ ticker: 'USTEC', levels: [20000], maxOffset: 2 }] } }) }
     };
-    main.install({ servicesApi });
+    main.install({
+      servicesApi,
+      orderCalc: { qty: () => 0.5 },
+      tradeRules: { validate: () => ({ ok: true }) },
+      normalizeQuoteForValidation: quote => quote,
+      log() {}
+    });
     assert.ok(servicesApi.mt5VPS);
     const invoke = (name, ...args) => handlers.get(name)({
       senderFrame: { url: pathToFileURL(path.join(project, 'app/index.html')).href, parent: null }
@@ -48,6 +54,35 @@ test('the built app wires MT5 IPC, rejects external callers and starts disabled'
     assert.match((await handlers.get('mt5-vps:orders')({
       senderFrame: { url: 'https://example.invalid' }
     })).reason, /must originate/);
+
+    const configPath = path.join(userData, 'config/mt5-vps.json');
+    fs.mkdirSync(path.dirname(configPath));
+    const enable = tradingEnabled => fs.writeFileSync(configPath, JSON.stringify({ enabled: true, tradingEnabled }));
+    let submissions = 0;
+    servicesApi.mt5VPS.getAdapter = () => ({
+      config: { account: 123, server: 'Fake-MT5', tradingEnabled: true },
+      brokerSymbol: () => 'USTEC.test',
+      snapshot: async () => ({
+        symbol: 'USTEC.test', account: 123, server: 'Fake-MT5',
+        metadata: { tickSize: 0.1, quantityStep: 0.01, minQty: 0.01, maxQty: 100, contractSize: 1 }
+      }),
+      async armChunkEntry(plan) {
+        submissions++;
+        assert.equal(plan.executionPolicy, 'hybrid-market-limit-v1');
+        assert.equal(plan.zoneLower, 20000);
+        assert.equal(plan.zoneUpper, 20002);
+        return { status: 'ok' };
+      }
+    });
+    const entry = { action: 'MB', ticker: 'USTEC', level: 20000, riskUsd: 50, stopOffsetPts: 10, stopMode: 'entry' };
+    enable(false);
+    assert.match((await invoke('bml-sml:arm', entry)).reason, /disabled/);
+    assert.equal(submissions, 0);
+    enable(true);
+    assert.equal((await invoke('bml-sml:arm', { ...entry, level: 20001 })).status, 'rejected');
+    assert.equal(submissions, 0);
+    assert.equal((await invoke('bml-sml:arm', entry)).status, 'ok');
+    assert.equal(submissions, 1);
   } finally {
     interception.mock.restore();
     fs.rmSync(userData, { recursive: true, force: true });
