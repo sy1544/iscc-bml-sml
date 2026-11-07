@@ -1,4 +1,4 @@
-name: Sync upstream releases
+name: Sync upstream releases and build macOS
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: sync-upstream-releases
@@ -16,41 +16,141 @@ jobs:
   sync:
     if: github.repository == 'sy1544/iscc-bml-sml' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 10
+    outputs:
+      releases: ${{ steps.plan.outputs.releases }}
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
 
-      - name: Merge new upstream release tags into main
+      - name: Merge upstream releases and plan macOS builds
+        id: plan
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           UPSTREAM: Ivan25rus/iscc-bml-sml
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-          # Start with v0.4.0. Include every subsequently published release,
-          # even if multiple releases appear between scheduled runs.
+          # Start with v0.4.0 and catch releases published between polls.
           releases=$(gh api --paginate "repos/$UPSTREAM/releases?per_page=100" |
-            jq -sr 'add | map(select(.draft == false and .published_at >= "2026-11-06T11:41:36Z"))
-              | sort_by(.published_at, .id) | .[].tag_name')
+            jq -sc 'add | map(select(.draft == false and .published_at >= "2026-11-06T11:41:36Z"))
+              | sort_by(.published_at, .id)')
+          latest=$(jq -r 'last | .id // empty' <<< "$releases")
+          pending='[]'
 
-          while IFS= read -r tag; do
+          while IFS=$'\t' read -r tag id; do
             [[ -n "$tag" ]] || continue
             synced_ref="refs/tags/upstream/$tag"
-            if git show-ref --verify --quiet "$synced_ref"; then
+            source_ref="refs/tags/macos-source/$tag"
+            built_ref="refs/tags/macos-built/$tag"
+            if ! git show-ref --verify --quiet "$synced_ref"; then
+              git fetch --no-tags "https://github.com/$UPSTREAM.git" "refs/tags/$tag"
+              release_ref=$(git rev-parse --verify FETCH_HEAD)
+              git merge --no-edit 'FETCH_HEAD^{commit}'
+              git push --atomic origin HEAD:refs/heads/main "$release_ref:$synced_ref" "HEAD:$source_ref"
+              git update-ref "$source_ref" HEAD
+            elif ! git show-ref --verify --quiet "$source_ref"; then
+              # A release already synced by the original workflow.
+              git push origin "$synced_ref^{commit}:$source_ref"
+              git update-ref "$source_ref" "$synced_ref^{commit}"
+            fi
+            if git show-ref --verify --quiet "$built_ref" && [[ "$MANUAL:$id" != "true:$latest" ]]; then
               continue
             fi
+            sha=$(git rev-parse "$source_ref")
+            label=$(printf '%s' "$tag" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-60)
+            pending=$(jq -c --arg tag "$tag" --arg sha "$sha" --arg name "ISCC-${label}-${id}" \
+              '. + [{tag:$tag, sha:$sha, name:$name}]' <<< "$pending")
+          done < <(jq -r '.[] | [.tag_name, .id] | @tsv' <<< "$releases")
 
-            git fetch --no-tags "https://github.com/$UPSTREAM.git" "refs/tags/$tag"
-            release_ref=$(git rev-parse --verify FETCH_HEAD)
-            release_commit=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
-            echo "Merging upstream release $tag ($release_commit)"
-            git merge --no-edit "$release_commit"
+          matrix=$(jq -c '[.[] as $release |
+            $release + {runner:"macos-15", arch:"arm64"},
+            $release + {runner:"macos-15-intel", arch:"x64"}]' <<< "$pending")
+          echo "releases=$pending" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-            # Record the source tag only if the branch update also succeeds.
-            git push --atomic origin HEAD:refs/heads/main "$release_ref:$synced_ref"
-          done <<< "$releases"
+  macos:
+    needs: sync
+    if: needs.sync.outputs.matrix != '[]'
+    name: macOS ${{ matrix.arch }} · ${{ matrix.tag }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.sync.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: iziziz-indepstate/indepstate-cc
+          ref: 19262f3253f14570fb96fafa63e233e71d63617e # v1.2.0
+          path: base-app
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Verify and integrate the release
+        env:
+          SOURCE_SHA: ${{ matrix.sha }}
+        run: |
+          kit="$RUNNER_TEMP/iscc-kit"
+          mkdir "$kit"
+          git archive "$SOURCE_SHA" | tar -xf - -C "$kit"
+          # Fork automation lives outside the upstream distribution manifest.
+          rm -rf "$kit/.github"
+          npm --prefix "$kit" test
+          python3 .github/iscc-macos/assemble.py "$kit" base-app
+      - name: Test and package ISCC
+        working-directory: base-app
+        env:
+          ARCH: ${{ matrix.arch }}
+          ARTIFACT: ${{ matrix.name }}-macos-${{ matrix.arch }}.zip
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm install --no-audit --no-fund
+          npm test
+          node --test ../.github/iscc-macos/integration.test.js
+          npx --no-install electron-builder --mac zip "--$ARCH" --publish never
+          executable=$(find dist -path '*/ISCC.app/Contents/MacOS/ISCC' -print -quit)
+          test -n "$executable"
+          if [[ "$ARCH" == x64 ]]; then expected=x86_64; else expected=arm64; fi
+          lipo -verify_arch "$expected" "$executable"
+          archive=$(find dist -maxdepth 1 -name '*.zip' -print -quit)
+          test -n "$archive"
+          mv "$archive" "dist/$ARTIFACT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: base-app/dist/${{ matrix.name }}-macos-${{ matrix.arch }}.zip
+          archive: false
+          if-no-files-found: error
+
+  record-build:
+    needs: [sync, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Record completed builds
+        env:
+          RELEASES: ${{ needs.sync.outputs.releases }}
+        run: |
+          while IFS=$'\t' read -r tag sha; do
+            git push origin "$sha:refs/tags/macos-built/$tag"
+          done < <(jq -r '.[] | [.tag, .sha] | @tsv' <<< "$RELEASES")

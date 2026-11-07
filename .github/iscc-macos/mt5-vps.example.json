@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "tradingEnabled": false,
+  "endpoint": "",
+  "account": 0,
+  "server": "",
+  "token": "",
+  "caFile": "",
+  "spxSymbol": "",
+  "ustecSymbol": "",
+  "followers": [],
+  "timeExit": { "enabled": false, "time": "" }
+}
