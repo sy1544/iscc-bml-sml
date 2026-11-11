@@ -82,7 +82,7 @@ jobs:
     if: needs.sync.outputs.matrix != '[]'
     name: macOS ${{ matrix.arch }} · ${{ matrix.tag }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -113,28 +113,51 @@ jobs:
           rm -rf "$kit/.github"
           npm --prefix "$kit" test
           python3 .github/iscc-macos/assemble.py "$kit" base-app
-      - name: Test and package ISCC
+      - name: Test ISCC
         working-directory: base-app
-        env:
-          ARCH: ${{ matrix.arch }}
-          ARTIFACT: ${{ matrix.name }}-macos-${{ matrix.arch }}.zip
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           npm install --no-audit --no-fund
           npm test
           node --test ../.github/iscc-macos/integration.test.js
-          npx --no-install electron-builder --mac dir "--$ARCH" --publish never
+      - name: Sign and notarize ISCC
+        working-directory: base-app
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing GitHub Actions secret $name"
+              exit 1
+            fi
+          done
+          key_dir=$(mktemp -d "$RUNNER_TEMP/iscc-notary.XXXXXX")
+          trap 'rm -rf "$key_dir"' EXIT
+          export APPLE_API_KEY="$key_dir/AuthKey.p8"
+          (umask 077; printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$APPLE_API_KEY")
+          unset APPLE_API_KEY_BASE64
+          npx --no-install electron-builder --mac dir "--$ARCH" --publish never \
+            --config.forceCodeSigning=true --config.mac.type=distribution \
+            --config.mac.hardenedRuntime=true --config.mac.notarize=true
+      - name: Verify and package the notarized app
+        working-directory: base-app
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          ARTIFACT: ${{ matrix.name }}-macos-${{ matrix.arch }}.zip
+        run: |
           app=$(find dist -name ISCC.app -type d -print -quit)
           test -n "$app"
           if [[ "$ARCH" == x64 ]]; then expected=x86_64; else expected=arm64; fi
           test "$(lipo -archs "$app/Contents/MacOS/ISCC")" = "$expected"
-          node -e 'require("@electron/osx-sign").signAsync({
-            app: process.argv[1], identity: "-", identityValidation: false,
-            preAutoEntitlements: false,
-            optionsForFile: () => ({ hardenedRuntime: false, timestamp: "none" })
-          }).catch(error => { console.error(error); process.exitCode = 1; })' "$app"
           codesign --verify --deep --strict "$app"
-          # A valid on-disk signature can still fail macOS library validation.
+          xcrun stapler validate "$app"
+          syspolicy_check distribution "$app"
           ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/ISCC" -e 'if (!process.versions.electron) process.exit(1)'
           ditto -c -k --sequesterRsrc --keepParent "$app" "dist/$ARTIFACT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -169,7 +192,7 @@ jobs:
           while IFS=$'\t' read -r tag sha name prerelease; do
             assets=$(mktemp -d)
             for arch in arm64 x64; do
-              cp "$RUNNER_TEMP/macos-artifacts/$name-macos-$arch.zip" "$assets/ISCC-macos-$arch.zip"
+              cp "$RUNNER_TEMP/macos-artifacts/$name-macos-$arch.zip" "$assets/ISCC-macos-$arch-notarized.zip"
             done
             bash .github/iscc-macos/publish-release.sh "$tag" "$sha" "$prerelease" "$assets"
             git push origin "$sha:refs/tags/macos-built/$tag"
