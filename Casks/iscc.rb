@@ -10,5 +10,7 @@ cask "iscc" do
   desc "Trading execution gateway with BML/SML support"
   homepage "https://github.com/sy1544/iscc-bml-sml"
 
+  depends_on :macos
+
   app "ISCC.app"
 end
