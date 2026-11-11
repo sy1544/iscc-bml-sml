@@ -109,8 +109,8 @@ jobs:
           kit="$RUNNER_TEMP/iscc-kit"
           mkdir "$kit"
           git archive "$SOURCE_SHA" | tar -xf - -C "$kit"
-          # Fork automation lives outside the upstream distribution manifest.
-          rm -rf "$kit/.github"
+          # The fork's automation and Homebrew casks are outside the upstream kit.
+          rm -rf "$kit/.github" "$kit/Casks"
           npm --prefix "$kit" test
           python3 .github/iscc-macos/assemble.py "$kit" base-app
       - name: Test ISCC
