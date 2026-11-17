@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -111,10 +112,17 @@ def assemble(kit, project):
                              "        connection.on('quote:updated', snapshot => {\n"
                              "          publishQuote({...snapshot, provider: 'mt5-vps'});")
     reference = reference.replace(",canRecoverConnection:await tunnelRecovery.available(config)", "")
-    reference = replace_once(reference, "if (!settings.writeConfig('mt5-vps',changed)) throw Error('Не удалось сохранить настройки');",
-                             'saveConfig({followers:next,mirrorAccount:changed.mirrorAccount});')
-    reference = replace_once(reference, "if (!settings.writeConfig('mt5-vps',{...config,timeExit})) throw Error('Не удалось сохранить время закрытия');",
-                             'saveConfig({timeExit});')
+    config_writes = [
+        (r'changed', 'followers:next,mirrorAccount:changed.mirrorAccount'),
+        (r'\{\.\.\.(?:config|current),timeExit\}', 'timeExit'),
+    ]
+    if "ipcMain.handle('mt5-vps:save-primary-risk'" in reference:
+        config_writes.append((r'\{\.\.\.config,primaryRiskByAccount:policies\}', 'primaryRiskByAccount:policies'))
+    for upstream, fields in config_writes:
+        pattern = rf"if\s*\(!settings\.writeConfig\('mt5-vps',{upstream}\)\)\s*throw Error\('[^'\n]+'\);"
+        reference, count = re.subn(pattern, f'saveConfig({{{fields}}});', reference)
+        if count != 1:
+            raise ValueError(f'Unexpected MT5 configuration write for {fields}')
     if 'tunnelRecovery' in reference or 'settings.writeConfig' in reference:
         raise ValueError('The updated MT5 service reference needs review')
     (mt5 / 'manifest.js').write_text(reference)
