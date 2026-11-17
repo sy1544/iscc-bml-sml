@@ -72,7 +72,7 @@ jobs:
           done < <(jq -r '.[] | [.tag_name, .id, .prerelease] | @tsv' <<< "$releases")
 
           matrix=$(jq -c '[.[] as $release |
-            $release + {runner:"macos-15", arch:"arm64"},
+            $release + {runner:"macos-26", arch:"arm64"},
             $release + {runner:"macos-15-intel", arch:"x64"}]' <<< "$pending")
           echo "releases=$pending" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
