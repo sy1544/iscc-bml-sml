@@ -173,7 +173,26 @@ jobs:
           unset CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_BASE64
           npx --no-install electron-builder --mac dir "--$ARCH" --publish never \
             --config.forceCodeSigning=true --config.mac.type=distribution --config.mac.identity="$identity" \
-            --config.mac.hardenedRuntime=true --config.mac.notarize=true
+            --config.mac.hardenedRuntime=true --config.mac.notarize=false
+
+          app=$(find dist -name ISCC.app -type d -print -quit)
+          test -n "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$key_dir/ISCC.zip"
+          submission=$(xcrun notarytool submit "$key_dir/ISCC.zip" \
+            --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" \
+            --wait --timeout 30m --output-format json)
+          if ! jq -e '.status == "Accepted"' <<< "$submission" >/dev/null; then
+            jq '{id, status, message}' <<< "$submission"
+            exit 1
+          fi
+
+          # Apple can accept a submission before the ticket service is reachable.
+          attempt=1
+          until xcrun stapler staple "$app"; do
+            if (( attempt >= 6 )); then exit 1; fi
+            sleep "$((attempt * 15))"
+            attempt=$((attempt + 1))
+          done
       - name: Verify and package the notarized app
         working-directory: base-app
         shell: bash
