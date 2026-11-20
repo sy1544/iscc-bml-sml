@@ -1,9 +1,9 @@
 cask "iscc" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.4.1"
-  sha256 arm:   "f70c4dab94245d1db4abb739a9e56bf981869cb0b215e33596cebec0959a8a16",
-         intel: "f21c3ba13dd6e77f2ec41dba206c7ca73d79f1cd2f75c2e9d52879b49df2f9f1"
+  version "0.4.2"
+  sha256 arm:   "50e3c96c16230d461314055cc281ca9fffe6b689848679e794f09e8723eefd99",
+         intel: "6dc7b829de6f87bd15f0d4dbbba1d7f087139474e82d784f30b0771dc2ef9b5a"
 
   url "https://github.com/sy1544/iscc-bml-sml/releases/download/v#{version}/ISCC-macos-#{arch}-notarized.zip"
   name "ISCC"
