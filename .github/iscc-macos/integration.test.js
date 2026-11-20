@@ -88,8 +88,52 @@ test('the built app wires MT5 IPC, rejects external callers and starts disabled'
     assert.equal(submissions, 0);
     assert.equal((await invoke('bml-sml:arm', entry)).status, 'ok');
     assert.equal(submissions, 1);
+
+    if (handlers.has('mt5-vps:save-account-names')) {
+      const config = { enabled: true, tradingEnabled: false, account: 123, server: 'Fake-MT5', endpoint: 'https://example.invalid' };
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      const { ACCOUNT_CHUNK_CAPABILITY, ACCOUNT_ZONE_CAPABILITY } = require(path.join(project, 'app/services/mt5-vps/entryAdmission'));
+      const primary = {
+        config: { ...config }, remoteAccounts: [],
+        capabilities: [ACCOUNT_CHUNK_CAPABILITY, ACCOUNT_ZONE_CAPABILITY],
+        managementState: async () => ({ accountStates: { '123': { connected: true, accountInfo: { tradeMode: 'real' } } } })
+      };
+      servicesApi.mt5VPS.getAdapter = () => primary;
+      for (const [channel, field, input, expected] of [
+        ['save-account-chunk-percents', 'accountChunkPercents', 'percentages', { '123': 25 }],
+        ['save-account-zone-multipliers', 'accountZoneMultipliers', 'multipliers', { '123': 2 }],
+        ['save-account-names', 'accountNames', 'names', { '123': 'Demo account' }]
+      ]) {
+        const payload = { account: '123', [input]: expected };
+        const before = fs.readFileSync(configPath, 'utf8');
+        assert.equal((await invoke('mt5-vps:' + channel, { ...payload, account: '456' })).status, 'rejected');
+        assert.equal(fs.readFileSync(configPath, 'utf8'), before);
+        const result = await invoke('mt5-vps:' + channel, payload);
+        assert.equal(result.status, 'ok', result.reason);
+        assert.deepEqual(primary.config[field], expected);
+        assert.deepEqual(JSON.parse(fs.readFileSync(configPath)), primary.config);
+      }
+      assert.equal(submissions, 1, 'Saving account settings must not submit an entry');
+    }
   } finally {
     interception.mock.restore();
     fs.rmSync(userData, { recursive: true, force: true });
+  }
+});
+
+test('the assembled entry-plan journal persists changes through its worker', async t => {
+  const services = path.join(process.cwd(), 'app/services');
+  const { buildId } = require(path.join(process.cwd(), 'app/build-info.json'));
+  if (['bml-sml-0.4.0', 'bml-sml-0.4.1'].includes(buildId)) return t.skip('Kit predates the entry-plan journal');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'iscc-journal-'));
+  try {
+    const file = path.join(directory, 'smoke.entry-plans.json');
+    const { writeJournal } = require(path.join(services, 'journalWriter'));
+    const { loadEntryPlans } = require(path.join(services, 'entryPlanJournal'));
+    const record = { id: 'test-plan', result: { status: 'unknown' } };
+    await writeJournal(file, [record]);
+    assert.deepEqual(loadEntryPlans(file).records.get(record.id), record);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -54,6 +54,9 @@ def assemble(kit, project):
         copy(source, addon / source.name)
     for name in ('durableFile.js', 'journalWriter.js', 'tvListener/candle-mappings.js'):
         copy(payload / name, services / name)
+    # Added in 0.4.2; journalWriter loads it in both the main and worker threads.
+    if (payload / 'entryPlanJournal.js').exists():
+        copy(payload / 'entryPlanJournal.js', services / 'entryPlanJournal.js')
     copy(kit / 'selection.js', services / 'selection.js')
     copy(kit / 'module/featurePolicy.js', addon / 'featurePolicy.js')
     for name in ('main.js', 'renderer.js', 'mt5-config.js'):
@@ -97,7 +100,7 @@ def assemble(kit, project):
     reference = replace_once(reference, "const settings = require('../settings');\nconst loadConfig = require('../../config/load');",
                              "const {readConfig, saveConfig} = require('../bml-sml/mt5-config');")
     start = reference.index("settings.register('mt5-vps',")
-    end = reference.index('function initService(api)', start)
+    end = reference.index('\n', reference.index('function readConfig()', start)) + 1
     reference = reference[:start] + reference[end:]
     reference = replace_once(reference, 'function initService(api)', 'function initService(api, handle, publishQuote)')
     reference = replace_once(reference, "  const {app, ipcMain, powerSaveBlocker} = require('electron');",
@@ -118,6 +121,13 @@ def assemble(kit, project):
     ]
     if "ipcMain.handle('mt5-vps:save-primary-risk'" in reference:
         config_writes.append((r'\{\.\.\.config,primaryRiskByAccount:policies\}', 'primaryRiskByAccount:policies'))
+    for field, channel in (
+        ('accountChunkPercents', 'save-account-chunk-percents'),
+        ('accountZoneMultipliers', 'save-account-zone-multipliers'),
+        ('accountNames', 'save-account-names'),
+    ):
+        if f"ipcMain.handle('mt5-vps:{channel}'" in reference:
+            config_writes.append((rf'\{{\.\.\.config,{field}:next\}}', f'{field}:next'))
     for upstream, fields in config_writes:
         pattern = rf"if\s*\(!settings\.writeConfig\('mt5-vps',{upstream}\)\)\s*throw Error\('[^'\n]+'\);"
         reference, count = re.subn(pattern, f'saveConfig({{{fields}}});', reference)
